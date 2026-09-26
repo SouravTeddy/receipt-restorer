@@ -222,44 +222,81 @@ body {
 #extractBtn.busy svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* AI extraction results: a thin line off each detected row of ink in the
-   image, ending in an editable field pre-filled with Claude's reading of
-   that row — so you can see exactly which part of the photo each line of
-   text came from, and correct it if needed. Only ever populated after a
-   real extraction response; nothing is shown until the API call succeeds. */
-#wordLayer {
+/* Extraction results: a slide-in panel listing what Claude read from the
+   image, one editable field per line, with a copy-all icon in the header.
+   Only ever populated by a real extraction response — nothing is shown
+   until the API call succeeds. */
+#resultPanel {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  max-width: 88vw;
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid var(--glass-border);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: none;
-  z-index: 2;
 }
-.word-line {
-  position: absolute;
-  height: 1px;
-  background: linear-gradient(to right, var(--accent-hot), transparent);
-  opacity: 0;
-  transition: opacity 0.5s ease;
+#resultPanel.show { transform: translateX(0); pointer-events: auto; }
+#resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
 }
-.word-line.rev { background: linear-gradient(to left, var(--accent-hot), transparent); }
-.word-line.show { opacity: 0.55; }
-.row-input {
-  position: absolute;
-  pointer-events: auto;
-  width: 9rem;
+#resultTitle {
+  font: 0.7rem/1 ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.75;
+}
+#resultActions { display: flex; align-items: center; gap: 0.9rem; }
+#resultCopy, #resultClose {
+  background: none;
+  border: none;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  transition: opacity 0.2s, color 0.2s;
+}
+#resultCopy:hover, #resultClose:hover { opacity: 1; }
+#resultCopy svg { width: 1rem; height: 1rem; }
+#resultCopy.copied { opacity: 1; color: var(--accent-hot); }
+#resultClose { font-size: 1.2rem; line-height: 1; }
+#resultList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.85rem 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.result-line {
+  width: 100%;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--glass-border);
-  font: 0.68rem/1.3 ui-monospace, "SF Mono", monospace;
+  font: 0.78rem/1.4 ui-monospace, "SF Mono", monospace;
   color: var(--ink);
-  padding: 0 0 2px;
+  padding: 0.2rem 0;
   outline: none;
-  opacity: 0;
-  transform: translateY(2px);
-  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s;
+  transition: border-color 0.2s;
 }
-.row-input.rev { text-align: right; }
-.row-input.show { opacity: 0.92; transform: translateY(0); }
-.row-input:focus { border-color: var(--accent-hot); }
+.result-line:focus { border-color: var(--accent-hot); }
 </style>
 
 <div id="stage">
@@ -278,7 +315,6 @@ body {
   <div id="splitZone" aria-label="Drag to compare original and restored">
     <div id="splitLine"></div>
   </div>
-  <div id="wordLayer"></div>
   <div id="reticle"></div>
   <button id="extractBtn" aria-label="Extract text with AI">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
@@ -286,6 +322,18 @@ body {
   <button id="saveBtn" aria-label="Save restored image">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M12 16l-4-4M12 16l4-4"/><path d="M4 19h16"/></svg>
   </button>
+  <div id="resultPanel" aria-label="Extracted receipt text">
+    <div id="resultHeader">
+      <span id="resultTitle">Extracted text</span>
+      <div id="resultActions">
+        <button id="resultCopy" aria-label="Copy all extracted text">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1"/></svg>
+        </button>
+        <button id="resultClose" aria-label="Close">&times;</button>
+      </div>
+    </div>
+    <div id="resultList"></div>
+  </div>
 </div>
 
 <script>
@@ -300,7 +348,10 @@ body {
   const splitZone = document.getElementById('splitZone');
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
-  const wordLayer = document.getElementById('wordLayer');
+  const resultPanel = document.getElementById('resultPanel');
+  const resultList = document.getElementById('resultList');
+  const resultCopy = document.getElementById('resultCopy');
+  const resultClose = document.getElementById('resultClose');
 
   let originalImageData = null;
   let confidenceCache = null;
@@ -399,83 +450,131 @@ body {
     requestAnimationFrame(() => { rafPending = false; renderConfidence(); });
   }
 
-  // ---- Positioning for AI-extraction leader lines. Each line's on-image
-  // position comes directly from Claude's own bounding-box estimate
-  // (fractions of image width/height), converted to canvas pixels here —
-  // not from any local pixel-density heuristic, which has no idea where
-  // real text actually is and paired badly with AI-found lines in testing. ----
-  const LEADER_LEN = 56;
-  let renderedRows = []; // { line, input, band } — kept across reposition calls
-                          // so window resize never wipes what's shown.
-
-  function clearWordLayer() {
-    wordLayer.innerHTML = '';
-    renderedRows = [];
-  }
-
-  // Builds fresh line+input pairs from { band, text } pairs (paired
-  // top-to-bottom between detected ink rows and Claude's returned lines).
-  function renderWordLayer(pairs, animate) {
-    wordLayer.innerHTML = '';
-    renderedRows = [];
-    pairs.forEach((pair) => {
-      const line = document.createElement('div');
-      line.className = 'word-line';
-      wordLayer.appendChild(line);
-
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'row-input';
-      input.value = pair.text;
-      wordLayer.appendChild(input);
-
-      renderedRows.push({ line, input, band: pair.band });
-    });
-    repositionRows();
-    renderedRows.forEach((row, i) => {
-      if (animate) {
-        const delay = Math.min(i * 25, 600);
-        setTimeout(() => { row.line.classList.add('show'); row.input.classList.add('show'); }, delay);
-      } else {
-        row.line.classList.add('show');
-        row.input.classList.add('show');
+  // ---- Stroke-width despeckle (ported from unredact) ----
+  // The confidence sweep above finds "darker than its surroundings" — but
+  // that alone reads camera/JPEG noise as text too, which is why a purely
+  // contrast-based reveal looks smudgy rather than clean. Real ink forms a
+  // connected blob of roughly CONSTANT width along its length; noise forms
+  // small, isolated, or wildly inconsistent-width blobs. This labels every
+  // connected component in the thresholded map, measures each one's size,
+  // fill-ratio, and stroke-width consistency/elongation, and keeps only the
+  // ones shaped like actual strokes — the step that makes the restored image
+  // look like isolated characters rather than just a brightened photo.
+  function computeWidthMap(isBlack, w, h) {
+    const n = w * h;
+    const hRun = new Int32Array(n), vRun = new Int32Array(n), d1Run = new Int32Array(n), d2Run = new Int32Array(n);
+    function fillRuns(getIndex, lineLen, outArr) {
+      let i = 0;
+      while (i < lineLen) {
+        const idx = getIndex(i);
+        if (!isBlack[idx]) { i++; continue; }
+        const start = i;
+        while (i < lineLen && isBlack[getIndex(i)]) i++;
+        const len = i - start;
+        for (let k = start; k < i; k++) outArr[getIndex(k)] = len;
       }
-    });
+    }
+    for (let y = 0; y < h; y++) { const yy = y; fillRuns((x) => yy * w + x, w, hRun); }
+    for (let x = 0; x < w; x++) { const xx = x; fillRuns((y) => y * w + xx, h, vRun); }
+    for (let d = -(h - 1); d < w; d++) {
+      const pts = [];
+      for (let y = 0; y < h; y++) { const x = y + d; if (x >= 0 && x < w) pts.push(y * w + x); }
+      fillRuns((i) => pts[i], pts.length, d1Run);
+    }
+    for (let s = 0; s < w + h - 1; s++) {
+      const pts = [];
+      for (let y = 0; y < h; y++) { const x = s - y; if (x >= 0 && x < w) pts.push(y * w + x); }
+      fillRuns((i) => pts[i], pts.length, d2Run);
+    }
+    const width = new Int32Array(n);
+    for (let p = 0; p < n; p++) { if (isBlack[p]) width[p] = Math.min(hRun[p], vRun[p], d1Run[p], d2Run[p]); }
+    return width;
   }
 
-  // Moves existing line+input pairs to match the current layout (window
-  // resize, orientation change) without touching their values.
-  function repositionRows() {
-    if (!renderedRows.length) return;
-    const ir = outCanvas.getBoundingClientRect();
-    const sr = stage.getBoundingClientRect();
-    const scaleX = ir.width / outCanvas.width;
-    const scaleY = ir.height / outCanvas.height;
-    const stageW = sr.width;
-    renderedRows.forEach(({ line, input, band: b }) => {
-      const cy = (ir.top - sr.top) + ((b.y0 + b.y1) / 2) * scaleY;
-      const rightX = (ir.left - sr.left) + b.x1 * scaleX;
-      const leftX = (ir.left - sr.left) + b.x0 * scaleX;
-      const goLeft = rightX + LEADER_LEN + 144 > stageW;
-      const anchorX = goLeft ? leftX : rightX;
-      const lineX = goLeft ? anchorX - LEADER_LEN : anchorX;
+  const DESPECKLE_MIN_SIZE = 6;
+  const DESPECKLE_MAX_EXTENT = 0.65;
+  const DESPECKLE_MAX_CV = 1.5;
+  const DESPECKLE_MIN_ELONGATION = 1.05;
 
-      line.className = 'word-line' + (goLeft ? ' rev' : '') + (line.classList.contains('show') ? ' show' : '');
-      line.style.top = cy + 'px';
-      line.style.left = lineX + 'px';
-      line.style.width = LEADER_LEN + 'px';
+  function computeFilteredBinarized(confidence, strictnessVal, w, h) {
+    const softness = 0.15;
+    const isBlack = new Uint8Array(w * h);
+    for (let p = 0; p < confidence.length; p++) {
+      const c = confidence[p];
+      let t = (c - strictnessVal + softness) / (2 * softness);
+      t = Math.max(0, Math.min(1, t));
+      const v = 255 * (1 - t);
+      isBlack[p] = v < 128 ? 1 : 0;
+    }
+    const widthMap = computeWidthMap(isBlack, w, h);
+    const labels = new Int32Array(w * h).fill(-1);
+    const sizes = [], bboxes = [], widthSum = [], widthSumSq = [];
+    const stack = [];
+    let nextLabel = 0;
+    for (let start = 0; start < w * h; start++) {
+      if (isBlack[start] && labels[start] === -1) {
+        stack.length = 0;
+        stack.push(start);
+        labels[start] = nextLabel;
+        let size = 0, wSum = 0, wSumSq = 0;
+        let minX = w, maxX = 0, minY = h, maxY = 0;
+        while (stack.length) {
+          const idx = stack.pop();
+          size++;
+          const wv = widthMap[idx];
+          wSum += wv; wSumSq += wv * wv;
+          const x = idx % w, y = (idx - x) / w;
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (x > 0 && isBlack[idx - 1] && labels[idx - 1] === -1) { labels[idx - 1] = nextLabel; stack.push(idx - 1); }
+          if (x < w - 1 && isBlack[idx + 1] && labels[idx + 1] === -1) { labels[idx + 1] = nextLabel; stack.push(idx + 1); }
+          if (y > 0 && isBlack[idx - w] && labels[idx - w] === -1) { labels[idx - w] = nextLabel; stack.push(idx - w); }
+          if (y < h - 1 && isBlack[idx + w] && labels[idx + w] === -1) { labels[idx + w] = nextLabel; stack.push(idx + w); }
+        }
+        sizes.push(size);
+        bboxes.push({ minX, maxX, minY, maxY });
+        widthSum.push(wSum); widthSumSq.push(wSumSq);
+        nextLabel++;
+      }
+    }
+    function isKept(i) {
+      const bboxArea = (bboxes[i].maxX - bboxes[i].minX + 1) * (bboxes[i].maxY - bboxes[i].minY + 1);
+      const extent = sizes[i] / bboxArea;
+      if (sizes[i] < DESPECKLE_MIN_SIZE || extent > DESPECKLE_MAX_EXTENT) return false;
+      const meanW = widthSum[i] / sizes[i];
+      if (meanW < 0.5) return false;
+      const varW = Math.max(0, widthSumSq[i] / sizes[i] - meanW * meanW);
+      const cv = Math.sqrt(varW) / meanW;
+      const elongation = sizes[i] / (meanW * meanW);
+      return cv <= DESPECKLE_MAX_CV && elongation >= DESPECKLE_MIN_ELONGATION;
+    }
+    const out = new ImageData(w, h);
+    const od = out.data;
+    for (let p = 0, j = 0; p < w * h; p++, j += 4) {
+      const lbl = labels[p];
+      const keep = lbl >= 0 && isKept(lbl);
+      const v = keep ? 0 : 255;
+      od[j] = od[j + 1] = od[j + 2] = v; od[j + 3] = 255;
+    }
+    return out;
+  }
 
-      input.className = 'row-input' + (goLeft ? ' rev' : '') + (input.classList.contains('show') ? ' show' : '');
-      input.style.top = (cy - 9) + 'px';
-      input.style.left = goLeft ? '' : (lineX + LEADER_LEN + 6) + 'px';
-      input.style.right = goLeft ? (stageW - lineX + 6) + 'px' : '';
-    });
+  // The despeckle pass (connected-component labeling + stroke-width check)
+  // costs noticeably more than the soft confidence render, so it only runs
+  // at settle points (image load, drag release) — not on every drag frame,
+  // where the cheap soft render above keeps things responsive.
+  function renderSharpened() {
+    if (!confidenceCache) return;
+    const w = originalImageData.width, h = originalImageData.height;
+    const out = computeFilteredBinarized(confidenceCache, strictness, w, h);
+    outCtx.putImageData(out, 0, 0);
   }
 
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
     layers.classList.remove('revealed');
-    clearWordLayer();
+    resultPanel.classList.remove('show');
+    resultList.innerHTML = '';
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -493,7 +592,7 @@ body {
         saveBtn.classList.add('active');
         extractBtn.classList.add('active');
         confidenceCache = computeConfidenceMap(originalImageData, w, h);
-        renderConfidence();
+        renderSharpened();
         requestAnimationFrame(() => {
           positionSplitZone();
           requestAnimationFrame(() => layers.classList.add('revealed'));
@@ -542,7 +641,6 @@ body {
   window.addEventListener('resize', () => {
     if (!layers.classList.contains('active')) return;
     positionSplitZone();
-    repositionRows();
   });
 
   // ---- The line's hitbox is the ONLY thing that ever changes strictness.
@@ -571,6 +669,10 @@ body {
   splitZone.addEventListener('pointerup', () => {
     splitDragging = false;
     reticle.classList.remove('pressed');
+    // The expensive despeckle pass only runs once dragging actually stops
+    // (and only if strictness genuinely changed) — the cheap soft render
+    // above is what keeps the live drag itself smooth.
+    if (Math.abs(strictness - dragStartStrictness) > 0.003) renderSharpened();
   });
   splitZone.addEventListener('pointercancel', () => { splitDragging = false; reticle.classList.remove('pressed'); });
 
@@ -604,9 +706,9 @@ body {
   saveBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     // Slider/drag changes render on the next animation frame, not
-    // synchronously — force a final render at the exact current
+    // synchronously — force a final despeckled render at the exact current
     // strictness now, so what's exported can never be one frame stale.
-    renderConfidence();
+    renderSharpened();
     outCanvas.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob);
@@ -619,18 +721,16 @@ body {
   });
 
   // ---- Server-side extraction (opt-in, one click = one paid API call) ----
-  // Sends the restored image to Claude, which returns each line of text
-  // together with its own bounding box (as a fraction of image width/
-  // height) — that's what places the leader line + editable field next to
-  // the part of the photo it came from. Never runs automatically; nothing
-  // is shown unless the call actually succeeds.
+  // Sends the restored (despeckled) image to Claude and shows what it read
+  // in a side panel, one editable field per line. Never runs automatically;
+  // nothing is shown unless the call actually succeeds.
   extractBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!layers.classList.contains('active')) return;
     extractBtn.disabled = true;
     extractBtn.classList.add('busy');
     try {
-      renderConfidence();
+      renderSharpened();
       const dataUrl = outCanvas.toDataURL('image/png');
       const res = await fetch('/api/extract', {
         method: 'POST',
@@ -640,19 +740,40 @@ body {
       if (!res.ok) throw new Error('extract failed');
       const data = await res.json();
       const lines = Array.isArray(data.lines) ? data.lines : [];
-      const w = outCanvas.width, h = outCanvas.height;
-      const pairs = lines
-        .filter((l) => l && typeof l.text === 'string')
-        .map((l) => ({
-          text: l.text,
-          band: { x0: l.x0 * w, x1: l.x1 * w, y0: l.y0 * h, y1: l.y1 * h },
-        }));
-      renderWordLayer(pairs, true);
+      resultList.innerHTML = '';
+      lines.forEach((line) => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'result-line';
+        input.value = String(line || '');
+        resultList.appendChild(input);
+      });
+      resultPanel.classList.add('show');
     } catch (err) {
-      // Silent — nothing fabricated, no lines appear.
+      // Silent — nothing fabricated, panel just doesn't open.
     } finally {
       extractBtn.disabled = false;
       extractBtn.classList.remove('busy');
+    }
+  });
+
+  resultClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    resultPanel.classList.remove('show');
+  });
+
+  resultCopy.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const text = Array.from(resultList.querySelectorAll('.result-line'))
+      .map((input) => input.value)
+      .join('\n');
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      resultCopy.classList.add('copied');
+      setTimeout(() => resultCopy.classList.remove('copied'), 1200);
+    } catch (err) {
+      // Clipboard permission denied or unavailable — nothing to fall back to.
     }
   });
 })();
