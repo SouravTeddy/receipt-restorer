@@ -300,6 +300,27 @@ body {
 #extractBtn:active { transform: translateY(0) scale(0.94); }
 #extractBtn:disabled { opacity: 0.6; cursor: default; }
 #extractBtn svg { width: 1.25rem; height: 1.25rem; }
+
+#extractToast {
+  position: absolute;
+  bottom: 5.25rem;
+  right: 1.5rem;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--ink);
+  font: 0.72rem/1 ui-monospace, "SF Mono", monospace;
+  white-space: nowrap;
+  z-index: 4;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+#extractToast.show { opacity: 0.95; transform: translateY(0); }
 #extractBtn.busy svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -447,6 +468,7 @@ body {
   <div id="promoBar">
     Support dev — <a href="https://uncoverroads.com/elara" target="_blank" rel="noopener">download Elara</a> · follow on <a href="https://x.com/Sourav_Teddy" target="_blank" rel="noopener">X</a> and <a href="https://www.linkedin.com/in/sourav-biswas93/" target="_blank" rel="noopener">LinkedIn</a>
   </div>
+  <div id="extractToast">Add your API key</div>
   <button id="extractBtn" aria-label="Extract text with AI">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
   </button>
@@ -483,6 +505,7 @@ body {
   const splitZone = document.getElementById('splitZone');
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
+  const extractToast = document.getElementById('extractToast');
   const retryBtn = document.getElementById('retryBtn');
   const promoBar = document.getElementById('promoBar');
   const resultBackdrop = document.getElementById('resultBackdrop');
@@ -762,42 +785,18 @@ body {
     }, 'image/png');
   });
 
-  // ---- Server-side extraction (opt-in, one click = one paid API call) ----
-  // Sends the restored image to Claude and shows what it read in a side
-  // panel, one editable field per line. Never runs automatically; nothing
-  // is shown unless the call actually succeeds.
-  extractBtn.addEventListener('click', async (e) => {
+  // ---- Server-side extraction, currently disabled ----
+  // The button stays visible, but no API call is made — server-side
+  // extraction needs ANTHROPIC_API_KEY set in the Vercel project (see
+  // README / api/extract.js), which isn't wired up on this deployment.
+  // Re-enabling: restore the fetch-to-/api/extract flow from git history.
+  let extractToastTimer = null;
+  extractBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!layers.classList.contains('active')) return;
-    extractBtn.disabled = true;
-    extractBtn.classList.add('busy');
-    try {
-      renderConfidence();
-      const dataUrl = outCanvas.toDataURL('image/png');
-      const res = await fetch('/api/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl }),
-      });
-      if (!res.ok) throw new Error('extract failed');
-      const data = await res.json();
-      const lines = Array.isArray(data.lines) ? data.lines : [];
-      resultList.innerHTML = '';
-      lines.forEach((line) => {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'result-line';
-        input.value = String(line || '');
-        resultList.appendChild(input);
-      });
-      resultPanel.classList.add('show');
-      resultBackdrop.classList.add('show');
-    } catch (err) {
-      // Silent — nothing fabricated, panel just doesn't open.
-    } finally {
-      extractBtn.disabled = false;
-      extractBtn.classList.remove('busy');
-    }
+    extractToast.classList.add('show');
+    clearTimeout(extractToastTimer);
+    extractToastTimer = setTimeout(() => extractToast.classList.remove('show'), 2000);
   });
 
   resultClose.addEventListener('click', (e) => {
