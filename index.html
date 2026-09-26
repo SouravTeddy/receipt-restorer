@@ -220,6 +220,26 @@ body {
 #retryBtn svg { width: 1.05rem; height: 1.05rem; }
 #retryBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
+/* Small promo line, only shown once a photo is loaded — never in the way
+   of the empty-state camera/upload buttons. */
+#promoBar {
+  position: absolute;
+  top: 1.25rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(-6px);
+  z-index: 4;
+  max-width: 88vw;
+  font: 0.68rem/1.5 ui-monospace, "SF Mono", monospace;
+  color: var(--ink);
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#promoBar.active { opacity: 0.7; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#promoBar a { color: var(--accent-hot); text-decoration: none; }
+#promoBar a:hover { text-decoration: underline; }
+
 #saveBtn {
   position: absolute;
   bottom: 1.5rem;
@@ -418,6 +438,9 @@ body {
   <button id="retryBtn" aria-label="Upload a different photo">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0115.3-6.36M21 12a9 9 0 01-15.3 6.36"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>
   </button>
+  <div id="promoBar">
+    Support dev — <a href="https://uncoverroads.com/elara" target="_blank" rel="noopener">download Elara</a> · follow on <a href="https://x.com/Sourav_Teddy" target="_blank" rel="noopener">X</a> and <a href="https://www.linkedin.com/in/sourav-biswas93/" target="_blank" rel="noopener">LinkedIn</a>
+  </div>
   <button id="extractBtn" aria-label="Extract text with AI">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
   </button>
@@ -455,6 +478,7 @@ body {
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
   const retryBtn = document.getElementById('retryBtn');
+  const promoBar = document.getElementById('promoBar');
   const resultBackdrop = document.getElementById('resultBackdrop');
   const resultPanel = document.getElementById('resultPanel');
   const resultList = document.getElementById('resultList');
@@ -585,6 +609,7 @@ body {
         saveBtn.classList.add('active');
         extractBtn.classList.add('active');
         retryBtn.classList.add('active');
+        promoBar.classList.add('active');
         confidenceCache = computeConfidenceMap(originalImageData, w, h);
         renderConfidence();
         requestAnimationFrame(() => {
@@ -609,6 +634,7 @@ body {
     saveBtn.classList.remove('active');
     extractBtn.classList.remove('active');
     retryBtn.classList.remove('active');
+    promoBar.classList.remove('active');
     closeResultPanel();
     resultList.innerHTML = '';
     originalImageData = null;
