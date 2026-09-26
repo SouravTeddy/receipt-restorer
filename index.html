@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Thermal Receipt Restorer</title>
 <style>
 :root {
@@ -34,6 +39,7 @@ body {
   position: relative;
   width: 100vw;
   height: 100vh;
+  height: 100dvh; /* avoids the mobile browser URL-bar resize jank */
   touch-action: none;
   user-select: none;
   overflow: hidden;
@@ -226,6 +232,17 @@ body {
    image, one editable field per line, with a copy-all icon in the header.
    Only ever populated by a real extraction response — nothing is shown
    until the API call succeeds. */
+#resultBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 4;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+#resultBackdrop.show { opacity: 1; pointer-events: auto; }
+
 #resultPanel {
   position: absolute;
   top: 0;
@@ -245,6 +262,25 @@ body {
   pointer-events: none;
 }
 #resultPanel.show { transform: translateX(0); pointer-events: auto; }
+
+/* On a phone, a right-hand side panel eats most of the screen and feels
+   like a sidebar, not a result — a bottom sheet reads as a popup instead. */
+@media (max-width: 640px) {
+  #resultPanel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 75vh;
+    border-left: none;
+    border-top: 1px solid var(--glass-border);
+    border-radius: 18px 18px 0 0;
+    transform: translateY(100%);
+  }
+  #resultPanel.show { transform: translateY(0); }
+}
 #resultHeader {
   display: flex;
   align-items: center;
@@ -298,6 +334,8 @@ body {
 }
 .result-line:focus { border-color: var(--accent-hot); }
 </style>
+</head>
+<body>
 
 <div id="stage">
   <div class="glow glow-hot"></div>
@@ -322,6 +360,7 @@ body {
   <button id="saveBtn" aria-label="Save restored image">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M12 16l-4-4M12 16l4-4"/><path d="M4 19h16"/></svg>
   </button>
+  <div id="resultBackdrop"></div>
   <div id="resultPanel" aria-label="Extracted receipt text">
     <div id="resultHeader">
       <span id="resultTitle">Extracted text</span>
@@ -348,10 +387,16 @@ body {
   const splitZone = document.getElementById('splitZone');
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
+  const resultBackdrop = document.getElementById('resultBackdrop');
   const resultPanel = document.getElementById('resultPanel');
   const resultList = document.getElementById('resultList');
   const resultCopy = document.getElementById('resultCopy');
   const resultClose = document.getElementById('resultClose');
+
+  function closeResultPanel() {
+    resultPanel.classList.remove('show');
+    resultBackdrop.classList.remove('show');
+  }
 
   let originalImageData = null;
   let confidenceCache = null;
@@ -453,7 +498,7 @@ body {
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
     layers.classList.remove('revealed');
-    resultPanel.classList.remove('show');
+    closeResultPanel();
     resultList.innerHTML = '';
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -490,7 +535,7 @@ body {
   ['dragleave', 'drop'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
   stage.addEventListener('drop', (e) => loadFile(e.dataTransfer.files && e.dataTransfer.files[0]));
 
-  const SPLIT_BAND_PX = 40;
+  const SPLIT_BAND_PX = 48; // wide enough for touch, not just a mouse cursor
 
   function setStrictness(v) {
     strictness = Math.max(0, Math.min(1, v));
@@ -625,6 +670,7 @@ body {
         resultList.appendChild(input);
       });
       resultPanel.classList.add('show');
+      resultBackdrop.classList.add('show');
     } catch (err) {
       // Silent — nothing fabricated, panel just doesn't open.
     } finally {
@@ -635,8 +681,9 @@ body {
 
   resultClose.addEventListener('click', (e) => {
     e.stopPropagation();
-    resultPanel.classList.remove('show');
+    closeResultPanel();
   });
+  resultBackdrop.addEventListener('click', closeResultPanel);
 
   resultCopy.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -654,3 +701,5 @@ body {
   });
 })();
 </script>
+</body>
+</html>
