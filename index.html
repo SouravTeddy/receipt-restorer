@@ -399,11 +399,11 @@ body {
     requestAnimationFrame(() => { rafPending = false; renderConfidence(); });
   }
 
-  // ---- Positioning for AI-extraction leader lines: finds each horizontal
-  // band of ink in the CURRENT restored render (same confidence data, same
-  // threshold as what's on screen) and, within each band, the actual
-  // left/right extent of the ink. Used only to place a leader line + field
-  // next to real text Claude found — never to detect text on its own. ----
+  // ---- Positioning for AI-extraction leader lines. Each line's on-image
+  // position comes directly from Claude's own bounding-box estimate
+  // (fractions of image width/height), converted to canvas pixels here —
+  // not from any local pixel-density heuristic, which has no idea where
+  // real text actually is and paired badly with AI-found lines in testing. ----
   const LEADER_LEN = 56;
   let renderedRows = []; // { line, input, band } — kept across reposition calls
                           // so window resize never wipes what's shown.
@@ -470,46 +470,6 @@ body {
       input.style.left = goLeft ? '' : (lineX + LEADER_LEN + 6) + 'px';
       input.style.right = goLeft ? (stageW - lineX + 6) + 'px' : '';
     });
-  }
-
-  function detectLineBands() {
-    if (!confidenceCache || !originalImageData) return [];
-    const w = originalImageData.width, h = originalImageData.height;
-    const rowCount = new Int32Array(h);
-    for (let y = 0; y < h; y++) {
-      const rowStart = y * w;
-      let c = 0;
-      for (let x = 0; x < w; x++) if (confidenceCache[rowStart + x] > strictness) c++;
-      rowCount[y] = c;
-    }
-    const minCount = Math.max(2, w * 0.01);
-    const maxGap = Math.max(2, Math.round(h * 0.005));
-    const raw = [];
-    let y = 0;
-    while (y < h) {
-      if (rowCount[y] <= minCount) { y++; continue; }
-      let end = y, gap = 0, yy = y + 1;
-      while (yy < h) {
-        if (rowCount[yy] > minCount) { end = yy; gap = 0; }
-        else if (++gap > maxGap) break;
-        yy++;
-      }
-      raw.push([y, end]);
-      y = yy;
-    }
-    const bands = [];
-    raw.forEach(([y0, y1]) => {
-      if (y1 - y0 < 2) return;
-      let x0 = w, x1 = 0;
-      for (let yy = y0; yy <= y1; yy++) {
-        const rowStart = yy * w;
-        for (let x = 0; x < w; x++) {
-          if (confidenceCache[rowStart + x] > strictness) { if (x < x0) x0 = x; if (x > x1) x1 = x; }
-        }
-      }
-      if (x1 > x0) bands.push({ y0, y1, x0, x1 });
-    });
-    return bands;
   }
 
   function loadFile(file) {
@@ -659,11 +619,11 @@ body {
   });
 
   // ---- Server-side extraction (opt-in, one click = one paid API call) ----
-  // Sends the restored image to Claude, then pairs its returned lines
-  // top-to-bottom with the ink rows detected locally in the same image, so
-  // each result shows up as a leader line + editable field pointing at the
-  // part of the photo it came from. Never runs automatically; nothing is
-  // shown unless the call actually succeeds.
+  // Sends the restored image to Claude, which returns each line of text
+  // together with its own bounding box (as a fraction of image width/
+  // height) — that's what places the leader line + editable field next to
+  // the part of the photo it came from. Never runs automatically; nothing
+  // is shown unless the call actually succeeds.
   extractBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!layers.classList.contains('active')) return;
@@ -680,10 +640,13 @@ body {
       if (!res.ok) throw new Error('extract failed');
       const data = await res.json();
       const lines = Array.isArray(data.lines) ? data.lines : [];
-      const bands = detectLineBands();
-      const n = Math.min(lines.length, bands.length);
-      const pairs = [];
-      for (let i = 0; i < n; i++) pairs.push({ band: bands[i], text: String(lines[i] || '') });
+      const w = outCanvas.width, h = outCanvas.height;
+      const pairs = lines
+        .filter((l) => l && typeof l.text === 'string')
+        .map((l) => ({
+          text: l.text,
+          band: { x0: l.x0 * w, x1: l.x1 * w, y0: l.y0 * h, y1: l.y1 * h },
+        }));
       renderWordLayer(pairs, true);
     } catch (err) {
       // Silent — nothing fabricated, no lines appear.

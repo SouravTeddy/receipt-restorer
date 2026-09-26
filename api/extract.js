@@ -39,9 +39,14 @@ export default async function handler(req, res) {
               type: 'text',
               text:
                 'This is a photo of a receipt. Read every distinct horizontal line of ' +
-                'printed text you can make out, top to bottom. Reply with only a JSON ' +
-                'array of strings, one entry per line, in reading order top-to-bottom. ' +
-                'Skip a line entirely if you cannot read it. No other text.',
+                'printed text you can make out. For each line, also estimate its bounding ' +
+                'box as a FRACTION of the image width/height (0 = left/top edge, 1 = ' +
+                'right/bottom edge of the whole image) — not pixels. Reply with only a ' +
+                'JSON array, one object per line, in this exact shape: ' +
+                '{"text": "...", "x0": 0.0, "x1": 0.0, "y0": 0.0, "y1": 0.0} ' +
+                '(x0/x1 = left/right extent of that line\'s text, y0/y1 = top/bottom extent). ' +
+                'Order the array top-to-bottom by y0. Skip a line entirely if you cannot ' +
+                'read it. No other text, no markdown fences.',
             },
           ],
         },
@@ -55,7 +60,19 @@ export default async function handler(req, res) {
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed)) lines = parsed.map((v) => String(v));
+        if (Array.isArray(parsed)) {
+          const clamp = (v) => Math.max(0, Math.min(1, Number(v)));
+          lines = parsed
+            .filter((v) => v && typeof v.text === 'string' && v.text.trim() !== '')
+            .map((v) => ({
+              text: v.text,
+              x0: clamp(v.x0),
+              x1: clamp(v.x1),
+              y0: clamp(v.y0),
+              y1: clamp(v.y1),
+            }))
+            .filter((v) => Number.isFinite(v.x0) && Number.isFinite(v.x1) && Number.isFinite(v.y0) && Number.isFinite(v.y1) && v.x1 > v.x0 && v.y1 > v.y0);
+        }
       } catch {
         // Leave lines empty — never guess at malformed output.
       }
