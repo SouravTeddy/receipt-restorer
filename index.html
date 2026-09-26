@@ -224,11 +224,17 @@ body {
    of the empty-state camera/upload buttons. */
 #promoBar {
   position: absolute;
-  top: 1.25rem;
+  top: 1.5rem;
   left: 50%;
   transform: translateX(-50%) translateY(-6px);
   z-index: 4;
   max-width: 88vw;
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   font: 0.68rem/1.5 ui-monospace, "SF Mono", monospace;
   color: var(--ink);
   text-align: center;
@@ -236,7 +242,7 @@ body {
   pointer-events: none;
   transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
-#promoBar.active { opacity: 0.7; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#promoBar.active { opacity: 0.85; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 #promoBar a { color: var(--accent-hot); text-decoration: none; }
 #promoBar a:hover { text-decoration: underline; }
 
