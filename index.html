@@ -191,6 +191,35 @@ body {
 @media not all and (hover: hover) and (pointer: fine) { #reticle { display: none; } }
 @media (hover: hover) and (pointer: fine) { #layers.active { cursor: none; } }
 
+/* Smaller than the bottom action buttons — a way back to the upload
+   screen, not a primary action. */
+#retryBtn {
+  position: absolute;
+  top: 1.25rem;
+  left: 1.25rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--ink);
+  opacity: 0.8;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s, border-color 0.25s, opacity 0.2s;
+}
+#retryBtn.active { display: flex; animation: btnIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both; }
+#retryBtn:hover { opacity: 1; transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,0.4), 0 0 18px var(--glow-hot); border-color: var(--accent-hot); }
+#retryBtn:active { transform: translateY(0) scale(0.94); }
+#retryBtn svg { width: 1.05rem; height: 1.05rem; }
+#retryBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
 #saveBtn {
   position: absolute;
   bottom: 1.5rem;
@@ -386,6 +415,9 @@ body {
     <div id="splitLine"></div>
   </div>
   <div id="reticle"></div>
+  <button id="retryBtn" aria-label="Upload a different photo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0115.3-6.36M21 12a9 9 0 01-15.3 6.36"/><path d="M3 4v5h5M21 20v-5h-5"/></svg>
+  </button>
   <button id="extractBtn" aria-label="Extract text with AI">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
   </button>
@@ -422,6 +454,7 @@ body {
   const splitZone = document.getElementById('splitZone');
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
+  const retryBtn = document.getElementById('retryBtn');
   const resultBackdrop = document.getElementById('resultBackdrop');
   const resultPanel = document.getElementById('resultPanel');
   const resultList = document.getElementById('resultList');
@@ -551,6 +584,7 @@ body {
         splitZone.classList.add('active');
         saveBtn.classList.add('active');
         extractBtn.classList.add('active');
+        retryBtn.classList.add('active');
         confidenceCache = computeConfidenceMap(originalImageData, w, h);
         renderConfidence();
         requestAnimationFrame(() => {
@@ -567,6 +601,25 @@ body {
   cameraInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
   cameraBtn.addEventListener('click', () => cameraInput.click());
   uploadBtn.addEventListener('click', () => fileInput.click());
+
+  retryBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    layers.classList.remove('active', 'revealed');
+    splitZone.classList.remove('active');
+    saveBtn.classList.remove('active');
+    extractBtn.classList.remove('active');
+    retryBtn.classList.remove('active');
+    closeResultPanel();
+    resultList.innerHTML = '';
+    originalImageData = null;
+    confidenceCache = null;
+    strictness = 0.5;
+    splitPct = 50;
+    outCanvas.style.clipPath = 'inset(0 0 0 50%)';
+    fileInput.value = '';
+    cameraInput.value = '';
+    dropzone.style.display = '';
+  });
   ['dragenter', 'dragover'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); if (!layers.classList.contains('active')) dropzone.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
   stage.addEventListener('drop', (e) => loadFile(e.dataTransfer.files && e.dataTransfer.files[0]));
