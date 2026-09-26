@@ -76,10 +76,24 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
   z-index: 1;
 }
-#dropzone-ring {
+#dropzone-actions {
+  display: flex;
+  gap: 2rem;
+}
+.dz-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.65rem;
+  background: none;
+  border: none;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 0;
+}
+.dz-btn-icon {
   width: 4.5rem;
   height: 4.5rem;
   border-radius: 50%;
@@ -89,17 +103,23 @@ body {
   justify-content: center;
   transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s, box-shadow 0.4s;
 }
-#dropzone:hover #dropzone-ring, #dropzone.drag #dropzone-ring {
+.dz-btn:hover .dz-btn-icon, .dz-btn:focus-visible .dz-btn-icon, #dropzone.drag .dz-btn-icon {
   transform: scale(1.08);
   border-color: var(--accent-hot);
   box-shadow: 0 0 40px var(--glow-hot);
 }
-#dropzone svg { width: 1.6rem; height: 1.6rem; stroke: var(--ink); opacity: 0.6; }
+.dz-btn-icon svg { width: 1.6rem; height: 1.6rem; stroke: var(--ink); opacity: 0.6; }
+.dz-btn-label {
+  font: 0.68rem/1 ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
 /* Kept fully out of layout/paint — clicked only via JS. An invisible
    input stretched over the dropzone is a fragile pattern (its native
    "No file chosen" tooltip can render disconnected from the visible
    icon inside a sandboxed iframe); this avoids that entirely. */
-#fileInput { position: fixed; top: -9999px; left: -9999px; }
+#cameraInput, #fileInput { position: fixed; top: -9999px; left: -9999px; }
 
 #layers {
   position: absolute;
@@ -340,10 +360,22 @@ body {
 <div id="stage">
   <div class="glow glow-hot"></div>
   <div class="glow glow-cool"></div>
-  <div id="dropzone" role="button" tabindex="0" aria-label="Upload a photo of a faded receipt">
-    <input type="file" id="fileInput" accept="image/*" capture="environment">
-    <div id="dropzone-ring">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+  <div id="dropzone">
+    <input type="file" id="cameraInput" accept="image/*" capture="environment">
+    <input type="file" id="fileInput" accept="image/*">
+    <div id="dropzone-actions">
+      <button type="button" class="dz-btn" id="cameraBtn" aria-label="Take a photo of the receipt">
+        <span class="dz-btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a2 2 0 012-2h1.5l1-1.5h7l1 1.5H18a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        </span>
+        <span class="dz-btn-label">Camera</span>
+      </button>
+      <button type="button" class="dz-btn" id="uploadBtn" aria-label="Upload a photo of the receipt">
+        <span class="dz-btn-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+        </span>
+        <span class="dz-btn-label">Upload</span>
+      </button>
     </div>
   </div>
   <div id="layers">
@@ -379,7 +411,10 @@ body {
 (function () {
   const stage = document.getElementById('stage');
   const dropzone = document.getElementById('dropzone');
+  const cameraInput = document.getElementById('cameraInput');
   const fileInput = document.getElementById('fileInput');
+  const cameraBtn = document.getElementById('cameraBtn');
+  const uploadBtn = document.getElementById('uploadBtn');
   const layers = document.getElementById('layers');
   const origImg = document.getElementById('origImg');
   const outCanvas = document.getElementById('outCanvas');
@@ -529,8 +564,9 @@ body {
   }
 
   fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
-  dropzone.addEventListener('click', () => fileInput.click());
-  dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  cameraInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+  cameraBtn.addEventListener('click', () => cameraInput.click());
+  uploadBtn.addEventListener('click', () => fileInput.click());
   ['dragenter', 'dragover'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); if (!layers.classList.contains('active')) dropzone.classList.add('drag'); }));
   ['dragleave', 'drop'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
   stage.addEventListener('drop', (e) => loadFile(e.dataTransfer.files && e.dataTransfer.files[0]));
