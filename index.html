@@ -1,0 +1,710 @@
+<title>Thermal Receipt Restorer</title>
+<style>
+:root {
+  --bg-deep: #07080b;
+  --glass: rgba(20, 15, 11, 0.55);
+  --glass-border: rgba(255, 170, 110, 0.16);
+  --ink: #f3ece2;
+  --accent-hot: #ff7a3d;
+  --accent-hot-ink: #1a0d05;
+  --glow-hot: rgba(255, 122, 61, 0.16);
+  --glow-cool: rgba(120, 130, 255, 0.10);
+}
+:root[data-theme="light"] {
+  --bg-deep: #0c0a08;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg-deep);
+  color: var(--ink);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; transition-duration: 0.001s !important; }
+}
+
+#stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  touch-action: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Ambient drifting glow — thermal-orange and a cool counterpoint, evoking
+   the confidence-sweep's heat/cold channel math. Purely decorative. */
+.glow {
+  position: absolute;
+  width: 60vmax;
+  height: 60vmax;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+.glow-hot {
+  top: -20vmax; left: -18vmax;
+  background: radial-gradient(circle, var(--glow-hot) 0%, transparent 70%);
+  animation: driftHot 26s ease-in-out infinite alternate;
+}
+.glow-cool {
+  bottom: -22vmax; right: -18vmax;
+  background: radial-gradient(circle, var(--glow-cool) 0%, transparent 70%);
+  animation: driftCool 32s ease-in-out infinite alternate;
+}
+@keyframes driftHot { from { transform: translate(0, 0) scale(1); } to { transform: translate(6vmax, 4vmax) scale(1.12); } }
+@keyframes driftCool { from { transform: translate(0, 0) scale(1); } to { transform: translate(-5vmax, -5vmax) scale(1.08); } }
+
+#dropzone {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1;
+}
+#dropzone-ring {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  border: 1px dashed var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s, box-shadow 0.4s;
+}
+#dropzone:hover #dropzone-ring, #dropzone.drag #dropzone-ring {
+  transform: scale(1.08);
+  border-color: var(--accent-hot);
+  box-shadow: 0 0 40px var(--glow-hot);
+}
+#dropzone svg { width: 1.6rem; height: 1.6rem; stroke: var(--ink); opacity: 0.6; }
+/* Kept fully out of layout/paint — clicked only via JS. An invisible
+   input stretched over the dropzone is a fragile pattern (its native
+   "No file chosen" tooltip can render disconnected from the visible
+   icon inside a sandboxed iframe); this avoids that entirely. */
+#fileInput { position: fixed; top: -9999px; left: -9999px; }
+
+#layers {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 1;
+  opacity: 0;
+  transform: scale(0.97);
+  transition: opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1), transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#layers.active { display: flex; }
+#layers.revealed { opacity: 1; transform: scale(1); }
+
+#origImg, #outCanvas {
+  position: absolute;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+  filter: saturate(0.92);
+}
+#outCanvas { clip-path: inset(0 0 0 50%); }
+
+/* Vertical reveal line: drag horizontally, hitbox is a band around the
+   line only, not the whole stage — grabbing it moves the split and never
+   touches strictness. Positioned in JS to match the actual image box
+   (object-fit: contain can letterbox the image within the stage). */
+#splitZone {
+  position: absolute;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+#splitZone.active { display: flex; }
+#splitLine {
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--accent-hot) 15%, var(--accent-hot) 85%, transparent);
+  box-shadow: 0 0 12px var(--glow-hot);
+}
+
+/* Custom reticle: replaces the pointer while hovering the image itself
+   (never over the line or save button, which keep their own cursors). */
+#reticle {
+  position: fixed;
+  top: 0; left: 0;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 50%;
+  border: 1px solid var(--accent-hot);
+  box-shadow: 0 0 16px var(--glow-hot), inset 0 0 10px var(--glow-hot);
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(1);
+  transition: opacity 0.25s ease, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+#reticle.show { opacity: 1; }
+#reticle.pressed { transform: translate(-50%, -50%) scale(0.8); }
+@media not all and (hover: hover) and (pointer: fine) { #reticle { display: none; } }
+@media (hover: hover) and (pointer: fine) { #layers.active { cursor: none; } }
+
+#saveBtn {
+  position: absolute;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--accent-hot);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s, border-color 0.25s;
+}
+#saveBtn.active { display: flex; animation: btnIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both; }
+#saveBtn:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0,0,0,0.45), 0 0 24px var(--glow-hot); border-color: var(--accent-hot); }
+#saveBtn:active { transform: translateY(0) scale(0.94); }
+#saveBtn svg { width: 1.25rem; height: 1.25rem; }
+@keyframes btnIn { from { opacity: 0; transform: translateY(10px) scale(0.9); } to { opacity: 1; transform: translateY(0) scale(1); } }
+#saveBtn:focus-visible, #splitZone:focus-visible, #dropzone:focus-visible, #extractBtn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* Same shape as save, offset to its left. One click = one billed API
+   call — never fired automatically. */
+#extractBtn {
+  position: absolute;
+  bottom: 1.5rem;
+  right: 5.25rem;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--accent-hot);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s, border-color 0.25s;
+}
+#extractBtn.active { display: flex; animation: btnIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both; }
+#extractBtn:hover { transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0,0,0,0.45), 0 0 24px var(--glow-hot); border-color: var(--accent-hot); }
+#extractBtn:active { transform: translateY(0) scale(0.94); }
+#extractBtn:disabled { opacity: 0.6; cursor: default; }
+#extractBtn svg { width: 1.25rem; height: 1.25rem; }
+#extractBtn.busy svg { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Manual verification: a thin line off each detected row of ink, ending
+   in a bare underlined field to type what that row says. No automated
+   reading, no box, no panel — just a line and a place to type. */
+#wordLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.word-line {
+  position: absolute;
+  height: 1px;
+  background: linear-gradient(to right, var(--accent-hot), transparent);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.word-line.rev { background: linear-gradient(to left, var(--accent-hot), transparent); }
+.word-line.show { opacity: 0.55; }
+.row-input {
+  position: absolute;
+  pointer-events: auto;
+  width: 9rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--glass-border);
+  font: 0.68rem/1.3 ui-monospace, "SF Mono", monospace;
+  color: var(--ink);
+  padding: 0 0 2px;
+  outline: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s;
+}
+.row-input.rev { text-align: right; }
+.row-input.show { opacity: 0.92; transform: translateY(0); }
+.row-input:focus { border-color: var(--accent-hot); }
+</style>
+
+<div id="stage">
+  <div class="glow glow-hot"></div>
+  <div class="glow glow-cool"></div>
+  <div id="dropzone" role="button" tabindex="0" aria-label="Upload a photo of a faded receipt">
+    <input type="file" id="fileInput" accept="image/*">
+    <div id="dropzone-ring">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></svg>
+    </div>
+  </div>
+  <div id="layers">
+    <img id="origImg" alt="">
+    <canvas id="outCanvas"></canvas>
+  </div>
+  <div id="splitZone" aria-label="Drag to compare original and restored">
+    <div id="splitLine"></div>
+  </div>
+  <div id="wordLayer"></div>
+  <div id="reticle"></div>
+  <button id="extractBtn" aria-label="Extract text with AI">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
+  </button>
+  <button id="saveBtn" aria-label="Save restored image">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M12 16l-4-4M12 16l4-4"/><path d="M4 19h16"/></svg>
+  </button>
+</div>
+
+<script>
+(function () {
+  const stage = document.getElementById('stage');
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const layers = document.getElementById('layers');
+  const origImg = document.getElementById('origImg');
+  const outCanvas = document.getElementById('outCanvas');
+  const outCtx = outCanvas.getContext('2d');
+  const splitZone = document.getElementById('splitZone');
+  const saveBtn = document.getElementById('saveBtn');
+  const extractBtn = document.getElementById('extractBtn');
+  const wordLayer = document.getElementById('wordLayer');
+
+  let originalImageData = null;
+  let confidenceCache = null;
+  let strictness = 0.5;
+  let splitPct = 50;
+  let rafPending = false;
+  let lastWords = null;
+
+  // ---- Channel extraction & confidence-sweep (see unredact project) ----
+  function extractChannel(imageData, ch) {
+    const src = imageData.data;
+    const n = src.length / 4;
+    const out = new Float64Array(n);
+    for (let i = 0, p = 0; i < src.length; i += 4, p++) {
+      const r = src[i], g = src[i + 1], b = src[i + 2];
+      switch (ch) {
+        case 'r': out[p] = r; break;
+        case 'g': out[p] = g; break;
+        case 'b': out[p] = b; break;
+        case 'rg': out[p] = Math.abs(r - g); break;
+        case 'rb': out[p] = Math.abs(r - b); break;
+        case 'gb': out[p] = Math.abs(g - b); break;
+        case 'sat': { const max = Math.max(r, g, b), min = Math.min(r, g, b); out[p] = max === 0 ? 0 : ((max - min) / max) * 255; break; }
+        case 'val': out[p] = Math.max(r, g, b); break;
+      }
+    }
+    return out;
+  }
+
+  function boxBlur(src, w, h, radius) {
+    const tmp = new Float64Array(src.length);
+    const out = new Float64Array(src.length);
+    const windowSize = radius * 2 + 1;
+    for (let y = 0; y < h; y++) {
+      const rowStart = y * w;
+      let sum = 0;
+      for (let x = -radius; x <= radius; x++) sum += src[rowStart + Math.min(w - 1, Math.max(0, x))];
+      for (let x = 0; x < w; x++) {
+        tmp[rowStart + x] = sum / windowSize;
+        sum += src[rowStart + Math.min(w - 1, x + radius + 1)] - src[rowStart + Math.max(0, x - radius)];
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let sum2 = 0;
+      for (let y = -radius; y <= radius; y++) sum2 += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (let y = 0; y < h; y++) {
+        out[y * w + x] = sum2 / windowSize;
+        sum2 += tmp[Math.min(h - 1, y + radius + 1) * w + x] - tmp[Math.max(0, y - radius) * w + x];
+      }
+    }
+    return out;
+  }
+
+  function computeConfidenceMap(imageData, w, h) {
+    const n = w * h;
+    const accum = new Float64Array(n);
+    let trials = 0;
+    const radius = 14;
+    const channelKeys = ['r', 'g', 'b', 'val', 'sat', 'rg', 'rb', 'gb'];
+    const sensLevels = [4, 8, 12, 16, 20, 26, 32, 40, 50];
+    channelKeys.forEach((ch) => {
+      const vals = extractChannel(imageData, ch);
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < vals.length; i++) { if (vals[i] < min) min = vals[i]; if (vals[i] > max) max = vals[i]; }
+      const range = Math.max(1, max - min);
+      const stretched = new Float64Array(vals.length);
+      for (let i = 0; i < vals.length; i++) stretched[i] = (vals[i] - min) / range * 255;
+      const localAvg = boxBlur(stretched, w, h, radius);
+      sensLevels.forEach((sens) => {
+        trials++;
+        for (let p = 0; p < stretched.length; p++) if (stretched[p] < localAvg[p] - sens) accum[p]++;
+      });
+    });
+    const confidence = new Float64Array(n);
+    for (let p = 0; p < n; p++) confidence[p] = accum[p] / trials;
+    return confidence;
+  }
+
+  function renderConfidence() {
+    if (!confidenceCache) return;
+    const softness = 0.15;
+    const w = originalImageData.width, h = originalImageData.height;
+    const out = outCtx.createImageData(w, h);
+    const od = out.data;
+    for (let p = 0, j = 0; p < confidenceCache.length; p++, j += 4) {
+      let t = (confidenceCache[p] - strictness + softness) / (2 * softness);
+      t = Math.max(0, Math.min(1, t));
+      const v = 255 * (1 - t);
+      od[j] = od[j + 1] = od[j + 2] = v; od[j + 3] = 255;
+    }
+    outCtx.putImageData(out, 0, 0);
+  }
+
+  function scheduleRender() {
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(() => { rafPending = false; renderConfidence(); });
+  }
+
+  // ---- Manual line verification: runs automatically once the image
+  // settles (never mid-drag). A thin line off each detected row of ink,
+  // ending in a bare underlined field — you type what that row says.
+  // No automated reading of any kind, so nothing can be wrong; a row
+  // that turns out to be noise just gets left blank. ----
+  const LEADER_LEN = 56;
+  let renderedRows = []; // { line, input, band } — kept across reposition calls
+                          // so window resize never wipes what's been typed.
+
+  function clearWordLayer() {
+    wordLayer.innerHTML = '';
+    renderedRows = [];
+  }
+
+  // Builds fresh line+input pairs from lastWords. Only called when the
+  // detected rows themselves change (new image, or a strictness-changing
+  // drag) — never on resize, so typed values are never at risk here.
+  function renderWordLayer(animate) {
+    wordLayer.innerHTML = '';
+    renderedRows = [];
+    if (!lastWords || !lastWords.length) return;
+    lastWords.forEach((w) => {
+      const line = document.createElement('div');
+      line.className = 'word-line';
+      wordLayer.appendChild(line);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'row-input';
+      wordLayer.appendChild(input);
+
+      renderedRows.push({ line, input, band: w.band });
+    });
+    repositionRows();
+    renderedRows.forEach((row, i) => {
+      if (animate) {
+        const delay = Math.min(i * 25, 600);
+        setTimeout(() => { row.line.classList.add('show'); row.input.classList.add('show'); }, delay);
+      } else {
+        row.line.classList.add('show');
+        row.input.classList.add('show');
+      }
+    });
+  }
+
+  // Moves existing line+input pairs to match the current layout (window
+  // resize, orientation change) without touching their values.
+  function repositionRows() {
+    if (!renderedRows.length) return;
+    const ir = outCanvas.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    const scaleX = ir.width / outCanvas.width;
+    const scaleY = ir.height / outCanvas.height;
+    const stageW = sr.width;
+    renderedRows.forEach(({ line, input, band: b }) => {
+      const cy = (ir.top - sr.top) + ((b.y0 + b.y1) / 2) * scaleY;
+      const rightX = (ir.left - sr.left) + b.x1 * scaleX;
+      const leftX = (ir.left - sr.left) + b.x0 * scaleX;
+      const goLeft = rightX + LEADER_LEN + 144 > stageW;
+      const anchorX = goLeft ? leftX : rightX;
+      const lineX = goLeft ? anchorX - LEADER_LEN : anchorX;
+
+      line.className = 'word-line' + (goLeft ? ' rev' : '') + (line.classList.contains('show') ? ' show' : '');
+      line.style.top = cy + 'px';
+      line.style.left = lineX + 'px';
+      line.style.width = LEADER_LEN + 'px';
+
+      input.className = 'row-input' + (goLeft ? ' rev' : '') + (input.classList.contains('show') ? ' show' : '');
+      input.style.top = (cy - 9) + 'px';
+      input.style.left = goLeft ? '' : (lineX + LEADER_LEN + 6) + 'px';
+      input.style.right = goLeft ? (stageW - lineX + 6) + 'px' : '';
+    });
+  }
+
+  // Finds each horizontal band of ink in the CURRENT restored render (same
+  // confidence data, same threshold as what's on screen) and, within each
+  // band, the actual left/right extent of the ink — this is what used to
+  // come from an OCR engine's bounding boxes, computed ourselves instead so
+  // line position never depends on a third-party engine being reachable.
+  function detectLineBands() {
+    if (!confidenceCache || !originalImageData) return [];
+    const w = originalImageData.width, h = originalImageData.height;
+    const rowCount = new Int32Array(h);
+    for (let y = 0; y < h; y++) {
+      const rowStart = y * w;
+      let c = 0;
+      for (let x = 0; x < w; x++) if (confidenceCache[rowStart + x] > strictness) c++;
+      rowCount[y] = c;
+    }
+    const minCount = Math.max(2, w * 0.01);
+    const maxGap = Math.max(2, Math.round(h * 0.005));
+    const raw = [];
+    let y = 0;
+    while (y < h) {
+      if (rowCount[y] <= minCount) { y++; continue; }
+      let end = y, gap = 0, yy = y + 1;
+      while (yy < h) {
+        if (rowCount[yy] > minCount) { end = yy; gap = 0; }
+        else if (++gap > maxGap) break;
+        yy++;
+      }
+      raw.push([y, end]);
+      y = yy;
+    }
+    const bands = [];
+    raw.forEach(([y0, y1]) => {
+      if (y1 - y0 < 2) return;
+      let x0 = w, x1 = 0;
+      for (let yy = y0; yy <= y1; yy++) {
+        const rowStart = yy * w;
+        for (let x = 0; x < w; x++) {
+          if (confidenceCache[rowStart + x] > strictness) { if (x < x0) x0 = x; if (x > x1) x1 = x; }
+        }
+      }
+      if (x1 > x0) bands.push({ y0, y1, x0, x1 });
+    });
+    return bands;
+  }
+
+  function runAnnotate() {
+    if (!layers.classList.contains('active')) return;
+    const bands = detectLineBands();
+    lastWords = bands.map((band) => ({ band }));
+    renderWordLayer(true);
+  }
+
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('image/')) return;
+    layers.classList.remove('revealed');
+    lastWords = null;
+    clearWordLayer();
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1400 / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.round(img.naturalWidth * scale);
+        const h = Math.round(img.naturalHeight * scale);
+        origImg.src = event.target.result;
+        outCanvas.width = w; outCanvas.height = h;
+        outCtx.drawImage(img, 0, 0, w, h);
+        originalImageData = outCtx.getImageData(0, 0, w, h);
+        dropzone.style.display = 'none';
+        layers.classList.add('active');
+        splitZone.classList.add('active');
+        saveBtn.classList.add('active');
+        extractBtn.classList.add('active');
+        confidenceCache = computeConfidenceMap(originalImageData, w, h);
+        renderConfidence();
+        requestAnimationFrame(() => {
+          positionSplitZone();
+          requestAnimationFrame(() => layers.classList.add('revealed'));
+        });
+        runAnnotate();
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  ['dragenter', 'dragover'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); if (!layers.classList.contains('active')) dropzone.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach((evt) => stage.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+  stage.addEventListener('drop', (e) => loadFile(e.dataTransfer.files && e.dataTransfer.files[0]));
+
+  const SPLIT_BAND_PX = 40;
+
+  function setStrictness(v) {
+    strictness = Math.max(0, Math.min(1, v));
+    scheduleRender();
+  }
+
+  // The image (object-fit: contain) can be letterboxed inside #stage, so
+  // the draggable band is positioned against the image's own rendered
+  // box, not the stage — otherwise the visible line and the actual clip
+  // boundary inside the image drift apart on screens with a different
+  // aspect ratio than the photo.
+  function positionSplitZone() {
+    const ir = outCanvas.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    const centerX = (ir.left - sr.left) + (splitPct / 100) * ir.width;
+    splitZone.style.top = (ir.top - sr.top) + 'px';
+    splitZone.style.height = ir.height + 'px';
+    splitZone.style.left = (centerX - SPLIT_BAND_PX / 2) + 'px';
+    splitZone.style.width = SPLIT_BAND_PX + 'px';
+  }
+
+  function setSplit(pct) {
+    splitPct = Math.max(0, Math.min(100, pct));
+    outCanvas.style.clipPath = 'inset(0 0 0 ' + splitPct + '%)';
+    positionSplitZone();
+  }
+
+  window.addEventListener('resize', () => {
+    if (!layers.classList.contains('active')) return;
+    positionSplitZone();
+    repositionRows();
+  });
+
+  // ---- The line's hitbox is the ONLY thing that ever changes strictness.
+  // x is absolute (cursor position = split position, standard for a
+  // reveal slider). y is RELATIVE to where you grabbed it — moving the
+  // pointer up/down after grabbing nudges strictness from whatever it
+  // already was; grabbing low on the line does not itself snap strictness
+  // to a low value just because that's where the pointer landed. ----
+  let splitDragging = false;
+  let dragStartY = 0, dragStartStrictness = 0.5;
+  splitZone.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    splitDragging = true;
+    dragStartY = e.clientY;
+    dragStartStrictness = strictness;
+    splitZone.setPointerCapture(e.pointerId);
+    reticle.classList.add('pressed');
+  });
+  splitZone.addEventListener('pointermove', (e) => {
+    if (!splitDragging) return;
+    const ir = outCanvas.getBoundingClientRect();
+    setSplit(((e.clientX - ir.left) / ir.width) * 100);
+    const deltaFrac = (dragStartY - e.clientY) / ir.height;
+    setStrictness(dragStartStrictness + deltaFrac);
+  });
+  splitZone.addEventListener('pointerup', () => {
+    splitDragging = false;
+    reticle.classList.remove('pressed');
+    // Word extraction only ever runs once intensity has actually stopped
+    // changing — never mid-drag, and never for a pure left/right compare
+    // drag that never touched strictness at all.
+    if (Math.abs(strictness - dragStartStrictness) > 0.003) runAnnotate();
+  });
+  splitZone.addEventListener('pointercancel', () => { splitDragging = false; reticle.classList.remove('pressed'); });
+
+  // Tap the image itself (not the line) to load a different photo. Uses a
+  // movement/time threshold, not a bare 'click' — a native click fires even
+  // after a drag with real distance, so without this, any attempt to grab
+  // the line that missed its hitbox reopened the file picker instead of
+  // just doing nothing.
+  let layersDownPos = { x: 0, y: 0, t: 0 };
+  layers.addEventListener('pointerdown', (e) => { layersDownPos = { x: e.clientX, y: e.clientY, t: Date.now() }; });
+  layers.addEventListener('pointerup', (e) => {
+    const moved = Math.hypot(e.clientX - layersDownPos.x, e.clientY - layersDownPos.y);
+    if (moved < 6 && Date.now() - layersDownPos.t < 300) fileInput.click();
+  });
+
+  // ---- Decorative reticle: replaces the native cursor while hovering the
+  // image on mouse/trackpad. Hidden over the line and save button (which
+  // keep their own cursors) and on touch devices entirely. ----
+  const reticle = document.getElementById('reticle');
+  const pointerFine = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  if (pointerFine) {
+    stage.addEventListener('pointermove', (e) => {
+      reticle.style.left = e.clientX + 'px';
+      reticle.style.top = e.clientY + 'px';
+      const overImage = layers.classList.contains('active') && (e.target === layers || e.target === origImg || e.target === outCanvas);
+      reticle.classList.toggle('show', overImage);
+    });
+    stage.addEventListener('pointerleave', () => reticle.classList.remove('show'));
+  }
+
+  saveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Slider/drag changes render on the next animation frame, not
+    // synchronously — force a final render at the exact current
+    // strictness now, so what's exported can never be one frame stale.
+    renderConfidence();
+    outCanvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'restored_receipt.png';
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  });
+
+  // ---- Server-side extraction (opt-in, one click = one paid API call) ----
+  // Pre-fills the manual-verification fields with Claude's own reading of
+  // the restored image; every field stays editable afterward so you can
+  // correct anything it got wrong. Never runs automatically.
+  extractBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!renderedRows.length) return;
+    extractBtn.disabled = true;
+    extractBtn.classList.add('busy');
+    try {
+      const dataUrl = outCanvas.toDataURL('image/png');
+      const res = await fetch('/api/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      });
+      if (!res.ok) throw new Error('extract failed');
+      const data = await res.json();
+      const lines = Array.isArray(data.lines) ? data.lines : [];
+      const n = Math.min(renderedRows.length, lines.length);
+      for (let i = 0; i < n; i++) {
+        renderedRows[i].input.value = String(lines[i] || '');
+      }
+    } catch (err) {
+      // Silent — the fields just stay as they were; nothing fabricated.
+    } finally {
+      extractBtn.disabled = false;
+      extractBtn.classList.remove('busy');
+    }
+  });
+})();
+</script>
