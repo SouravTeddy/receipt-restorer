@@ -222,42 +222,71 @@ body {
 #extractBtn.busy svg { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Manual verification: a thin line off each detected row of ink, ending
-   in a bare underlined field to type what that row says. No automated
-   reading, no box, no panel — just a line and a place to type. */
-#wordLayer {
+/* Extraction results: a slide-in panel listing what Claude read from the
+   image, one editable field per line. Only ever populated by a real
+   extraction response — nothing is shown until the API call succeeds. */
+#resultPanel {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20rem;
+  max-width: 88vw;
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid var(--glass-border);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: none;
-  z-index: 2;
 }
-.word-line {
-  position: absolute;
-  height: 1px;
-  background: linear-gradient(to right, var(--accent-hot), transparent);
-  opacity: 0;
-  transition: opacity 0.5s ease;
+#resultPanel.show { transform: translateX(0); pointer-events: auto; }
+#resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
+  font: 0.7rem/1 ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+  opacity: 0.75;
 }
-.word-line.rev { background: linear-gradient(to left, var(--accent-hot), transparent); }
-.word-line.show { opacity: 0.55; }
-.row-input {
-  position: absolute;
-  pointer-events: auto;
-  width: 9rem;
+#resultClose {
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0;
+}
+#resultClose:hover { opacity: 1; }
+#resultList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.85rem 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.result-line {
+  width: 100%;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--glass-border);
-  font: 0.68rem/1.3 ui-monospace, "SF Mono", monospace;
+  font: 0.78rem/1.4 ui-monospace, "SF Mono", monospace;
   color: var(--ink);
-  padding: 0 0 2px;
+  padding: 0.2rem 0;
   outline: none;
-  opacity: 0;
-  transform: translateY(2px);
-  transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s;
+  transition: border-color 0.2s;
 }
-.row-input.rev { text-align: right; }
-.row-input.show { opacity: 0.92; transform: translateY(0); }
-.row-input:focus { border-color: var(--accent-hot); }
+.result-line:focus { border-color: var(--accent-hot); }
 </style>
 
 <div id="stage">
@@ -276,7 +305,6 @@ body {
   <div id="splitZone" aria-label="Drag to compare original and restored">
     <div id="splitLine"></div>
   </div>
-  <div id="wordLayer"></div>
   <div id="reticle"></div>
   <button id="extractBtn" aria-label="Extract text with AI">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3.2"/></svg>
@@ -284,6 +312,13 @@ body {
   <button id="saveBtn" aria-label="Save restored image">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13M12 16l-4-4M12 16l4-4"/><path d="M4 19h16"/></svg>
   </button>
+  <div id="resultPanel" aria-label="Extracted receipt text">
+    <div id="resultHeader">
+      <span>Extracted text</span>
+      <button id="resultClose" aria-label="Close">&times;</button>
+    </div>
+    <div id="resultList"></div>
+  </div>
 </div>
 
 <script>
@@ -298,14 +333,15 @@ body {
   const splitZone = document.getElementById('splitZone');
   const saveBtn = document.getElementById('saveBtn');
   const extractBtn = document.getElementById('extractBtn');
-  const wordLayer = document.getElementById('wordLayer');
+  const resultPanel = document.getElementById('resultPanel');
+  const resultList = document.getElementById('resultList');
+  const resultClose = document.getElementById('resultClose');
 
   let originalImageData = null;
   let confidenceCache = null;
   let strictness = 0.5;
   let splitPct = 50;
   let rafPending = false;
-  let lastWords = null;
 
   // ---- Channel extraction & confidence-sweep (see unredact project) ----
   function extractChannel(imageData, ch) {
@@ -398,137 +434,11 @@ body {
     requestAnimationFrame(() => { rafPending = false; renderConfidence(); });
   }
 
-  // ---- Manual line verification: runs automatically once the image
-  // settles (never mid-drag). A thin line off each detected row of ink,
-  // ending in a bare underlined field — you type what that row says.
-  // No automated reading of any kind, so nothing can be wrong; a row
-  // that turns out to be noise just gets left blank. ----
-  const LEADER_LEN = 56;
-  let renderedRows = []; // { line, input, band } — kept across reposition calls
-                          // so window resize never wipes what's been typed.
-
-  function clearWordLayer() {
-    wordLayer.innerHTML = '';
-    renderedRows = [];
-  }
-
-  // Builds fresh line+input pairs from lastWords. Only called when the
-  // detected rows themselves change (new image, or a strictness-changing
-  // drag) — never on resize, so typed values are never at risk here.
-  function renderWordLayer(animate) {
-    wordLayer.innerHTML = '';
-    renderedRows = [];
-    if (!lastWords || !lastWords.length) return;
-    lastWords.forEach((w) => {
-      const line = document.createElement('div');
-      line.className = 'word-line';
-      wordLayer.appendChild(line);
-
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'row-input';
-      wordLayer.appendChild(input);
-
-      renderedRows.push({ line, input, band: w.band });
-    });
-    repositionRows();
-    renderedRows.forEach((row, i) => {
-      if (animate) {
-        const delay = Math.min(i * 25, 600);
-        setTimeout(() => { row.line.classList.add('show'); row.input.classList.add('show'); }, delay);
-      } else {
-        row.line.classList.add('show');
-        row.input.classList.add('show');
-      }
-    });
-  }
-
-  // Moves existing line+input pairs to match the current layout (window
-  // resize, orientation change) without touching their values.
-  function repositionRows() {
-    if (!renderedRows.length) return;
-    const ir = outCanvas.getBoundingClientRect();
-    const sr = stage.getBoundingClientRect();
-    const scaleX = ir.width / outCanvas.width;
-    const scaleY = ir.height / outCanvas.height;
-    const stageW = sr.width;
-    renderedRows.forEach(({ line, input, band: b }) => {
-      const cy = (ir.top - sr.top) + ((b.y0 + b.y1) / 2) * scaleY;
-      const rightX = (ir.left - sr.left) + b.x1 * scaleX;
-      const leftX = (ir.left - sr.left) + b.x0 * scaleX;
-      const goLeft = rightX + LEADER_LEN + 144 > stageW;
-      const anchorX = goLeft ? leftX : rightX;
-      const lineX = goLeft ? anchorX - LEADER_LEN : anchorX;
-
-      line.className = 'word-line' + (goLeft ? ' rev' : '') + (line.classList.contains('show') ? ' show' : '');
-      line.style.top = cy + 'px';
-      line.style.left = lineX + 'px';
-      line.style.width = LEADER_LEN + 'px';
-
-      input.className = 'row-input' + (goLeft ? ' rev' : '') + (input.classList.contains('show') ? ' show' : '');
-      input.style.top = (cy - 9) + 'px';
-      input.style.left = goLeft ? '' : (lineX + LEADER_LEN + 6) + 'px';
-      input.style.right = goLeft ? (stageW - lineX + 6) + 'px' : '';
-    });
-  }
-
-  // Finds each horizontal band of ink in the CURRENT restored render (same
-  // confidence data, same threshold as what's on screen) and, within each
-  // band, the actual left/right extent of the ink — this is what used to
-  // come from an OCR engine's bounding boxes, computed ourselves instead so
-  // line position never depends on a third-party engine being reachable.
-  function detectLineBands() {
-    if (!confidenceCache || !originalImageData) return [];
-    const w = originalImageData.width, h = originalImageData.height;
-    const rowCount = new Int32Array(h);
-    for (let y = 0; y < h; y++) {
-      const rowStart = y * w;
-      let c = 0;
-      for (let x = 0; x < w; x++) if (confidenceCache[rowStart + x] > strictness) c++;
-      rowCount[y] = c;
-    }
-    const minCount = Math.max(2, w * 0.01);
-    const maxGap = Math.max(2, Math.round(h * 0.005));
-    const raw = [];
-    let y = 0;
-    while (y < h) {
-      if (rowCount[y] <= minCount) { y++; continue; }
-      let end = y, gap = 0, yy = y + 1;
-      while (yy < h) {
-        if (rowCount[yy] > minCount) { end = yy; gap = 0; }
-        else if (++gap > maxGap) break;
-        yy++;
-      }
-      raw.push([y, end]);
-      y = yy;
-    }
-    const bands = [];
-    raw.forEach(([y0, y1]) => {
-      if (y1 - y0 < 2) return;
-      let x0 = w, x1 = 0;
-      for (let yy = y0; yy <= y1; yy++) {
-        const rowStart = yy * w;
-        for (let x = 0; x < w; x++) {
-          if (confidenceCache[rowStart + x] > strictness) { if (x < x0) x0 = x; if (x > x1) x1 = x; }
-        }
-      }
-      if (x1 > x0) bands.push({ y0, y1, x0, x1 });
-    });
-    return bands;
-  }
-
-  function runAnnotate() {
-    if (!layers.classList.contains('active')) return;
-    const bands = detectLineBands();
-    lastWords = bands.map((band) => ({ band }));
-    renderWordLayer(true);
-  }
-
   function loadFile(file) {
     if (!file || !file.type.startsWith('image/')) return;
     layers.classList.remove('revealed');
-    lastWords = null;
-    clearWordLayer();
+    resultPanel.classList.remove('show');
+    resultList.innerHTML = '';
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -551,7 +461,6 @@ body {
           positionSplitZone();
           requestAnimationFrame(() => layers.classList.add('revealed'));
         });
-        runAnnotate();
       };
       img.src = event.target.result;
     };
@@ -596,7 +505,6 @@ body {
   window.addEventListener('resize', () => {
     if (!layers.classList.contains('active')) return;
     positionSplitZone();
-    repositionRows();
   });
 
   // ---- The line's hitbox is the ONLY thing that ever changes strictness.
@@ -625,10 +533,6 @@ body {
   splitZone.addEventListener('pointerup', () => {
     splitDragging = false;
     reticle.classList.remove('pressed');
-    // Word extraction only ever runs once intensity has actually stopped
-    // changing — never mid-drag, and never for a pure left/right compare
-    // drag that never touched strictness at all.
-    if (Math.abs(strictness - dragStartStrictness) > 0.003) runAnnotate();
   });
   splitZone.addEventListener('pointercancel', () => { splitDragging = false; reticle.classList.remove('pressed'); });
 
@@ -677,15 +581,17 @@ body {
   });
 
   // ---- Server-side extraction (opt-in, one click = one paid API call) ----
-  // Pre-fills the manual-verification fields with Claude's own reading of
-  // the restored image; every field stays editable afterward so you can
-  // correct anything it got wrong. Never runs automatically.
+  // Sends the restored image to Claude and shows what it read in a side
+  // panel, one editable field per line, so you can correct anything it
+  // got wrong. Never runs automatically; nothing is shown unless the call
+  // actually succeeds.
   extractBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!renderedRows.length) return;
+    if (!layers.classList.contains('active')) return;
     extractBtn.disabled = true;
     extractBtn.classList.add('busy');
     try {
+      renderConfidence();
       const dataUrl = outCanvas.toDataURL('image/png');
       const res = await fetch('/api/extract', {
         method: 'POST',
@@ -695,16 +601,26 @@ body {
       if (!res.ok) throw new Error('extract failed');
       const data = await res.json();
       const lines = Array.isArray(data.lines) ? data.lines : [];
-      const n = Math.min(renderedRows.length, lines.length);
-      for (let i = 0; i < n; i++) {
-        renderedRows[i].input.value = String(lines[i] || '');
-      }
+      resultList.innerHTML = '';
+      lines.forEach((line) => {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'result-line';
+        input.value = String(line || '');
+        resultList.appendChild(input);
+      });
+      resultPanel.classList.add('show');
     } catch (err) {
-      // Silent — the fields just stay as they were; nothing fabricated.
+      // Silent — nothing fabricated, panel just doesn't open.
     } finally {
       extractBtn.disabled = false;
       extractBtn.classList.remove('busy');
     }
+  });
+
+  resultClose.addEventListener('click', (e) => {
+    e.stopPropagation();
+    resultPanel.classList.remove('show');
   });
 })();
 </script>
