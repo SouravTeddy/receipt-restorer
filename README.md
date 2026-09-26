@@ -7,6 +7,8 @@ faint ink that a simple brightness/contrast filter would miss.
 It's a single static HTML file. No build step, no server, no backend, no API
 keys, no dependencies.
 
+**Live demo:** [receipt-restorer.vercel.app](https://receipt-restorer.vercel.app)
+
 ## Install / run it
 
 Clone the repo and open the file directly:
