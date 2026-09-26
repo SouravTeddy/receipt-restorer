@@ -61,3 +61,8 @@ pieces from `index.html`:
 
 Search for `promoBar` in the file — every reference is one of those four
 spots.
+
+## License
+
+MIT — free to use, modify, and ship, as long as you keep the copyright
+notice. See [LICENSE](LICENSE).
